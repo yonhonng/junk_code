@@ -202,9 +202,17 @@
         <a-plane
           src="#card"
           position="0 0 0"
-          rotation="0 0 90"
-          width="0.313"
-          height="1"
+          rotation="0 0 0"
+          width="1"
+          height="0.313"
+          material="
+            shader: flat;
+            transparent: true;
+            opacity: 1;
+            alphaTest: 0.01;
+            depthWrite: false;
+            side: double;
+          "
         ></a-plane>
 
         <a-gltf-model
