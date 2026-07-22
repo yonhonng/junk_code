@@ -137,10 +137,98 @@
       #error-message.hidden {
         display: none;
       }
+
+      /* Top-left Aquaponics koi visibility toggle */
+      #aquaponics-toggle {
+        position: fixed;
+        top: max(16px, env(safe-area-inset-top));
+        left: max(16px, env(safe-area-inset-left));
+        z-index: 1500;
+
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+
+        min-height: 46px;
+        padding: 10px 16px 10px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        border-radius: 999px;
+
+        color: white;
+        background: linear-gradient(135deg, rgba(20, 153, 124, 0.94), rgba(0, 102, 153, 0.94));
+        box-shadow:
+          0 8px 24px rgba(0, 0, 0, 0.3),
+          inset 0 1px 0 rgba(255, 255, 255, 0.28);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+
+        font-family: Arial, sans-serif;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        transition:
+          transform 160ms ease,
+          box-shadow 160ms ease,
+          background 160ms ease,
+          opacity 160ms ease;
+      }
+
+      #aquaponics-toggle::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        flex: 0 0 auto;
+        border: 2px solid rgba(255, 255, 255, 0.9);
+        border-radius: 50%;
+        background: #8fffc9;
+        box-shadow: 0 0 10px rgba(143, 255, 201, 0.9);
+        transition:
+          background 160ms ease,
+          box-shadow 160ms ease;
+      }
+
+      #aquaponics-toggle:hover {
+        transform: translateY(-1px);
+        box-shadow:
+          0 10px 28px rgba(0, 0, 0, 0.36),
+          inset 0 1px 0 rgba(255, 255, 255, 0.28);
+      }
+
+      #aquaponics-toggle:active {
+        transform: translateY(1px) scale(0.98);
+      }
+
+      #aquaponics-toggle:focus-visible {
+        outline: 3px solid rgba(255, 255, 255, 0.95);
+        outline-offset: 3px;
+      }
+
+      #aquaponics-toggle[aria-pressed="false"] {
+        background: rgba(35, 42, 49, 0.88);
+        opacity: 0.82;
+      }
+
+      #aquaponics-toggle[aria-pressed="false"]::before {
+        background: transparent;
+        box-shadow: none;
+      }
     </style>
   </head>
 
   <body>
+    <button
+      id="aquaponics-toggle"
+      type="button"
+      aria-pressed="true"
+      aria-label="Hide aquaponics koi"
+    >
+      Aquaponics
+    </button>
+
     <div id="scanning-overlay" class="hidden">
       <div class="scan-frame">
         <div class="scan-line"></div>
@@ -207,6 +295,14 @@
           crossorigin="anonymous"
           src="https://raw.githubusercontent.com/yonhonng/junk_code/main/koi_fish.glb"
         ></a-asset-item>
+
+        <audio
+          id="target-found-sound"
+          crossorigin="anonymous"
+          preload="auto"
+          loop
+          src="https://raw.githubusercontent.com/yonhonng/junk_code/main/water.mp3"
+        ></audio>
       </a-assets>
 
       <a-camera
@@ -257,6 +353,7 @@
         ></a-gltf-model>
 
         <a-gltf-model
+          class="koi-model"
           src="#koi"
           position="-0.2 0 -0.1"
           rotation="90 30 0"
@@ -272,6 +369,7 @@
         ></a-gltf-model>
 
         <a-gltf-model
+          class="koi-model"
           src="#koi"
           position="0.2 0 -0.1"
           rotation="-90 0 180"
@@ -293,6 +391,31 @@
         const scene = document.querySelector("#ar-scene");
         const target = document.querySelector("#image-target");
         const errorMessage = document.querySelector("#error-message");
+        const targetFoundSound = document.querySelector("#target-found-sound");
+        const aquaponicsToggle = document.querySelector("#aquaponics-toggle");
+        const koiModels = [...document.querySelectorAll(".koi-model")];
+
+        function setKoiVisibility(isEnabled) {
+          koiModels.forEach((model) => {
+            model.setAttribute("visible", isEnabled);
+          });
+
+          aquaponicsToggle.setAttribute("aria-pressed", String(isEnabled));
+          aquaponicsToggle.setAttribute(
+            "aria-label",
+            isEnabled ? "Hide aquaponics koi" : "Show aquaponics koi"
+          );
+        }
+
+        // The Aquaponics view starts enabled.
+        setKoiVisibility(true);
+
+        aquaponicsToggle.addEventListener("click", () => {
+          const isCurrentlyEnabled =
+            aquaponicsToggle.getAttribute("aria-pressed") === "true";
+
+          setKoiVisibility(!isCurrentlyEnabled);
+        });
 
         /**
          * MindAR creates its camera video element internally.
@@ -493,12 +616,33 @@
           errorMessage.classList.remove("hidden");
         });
 
-        target.addEventListener("targetFound", () => {
+        target.addEventListener("targetFound", async () => {
           console.log("Target found.");
+
+          /*
+           * Start the looping water sound from the beginning whenever the
+           * target becomes visible.
+           */
+          targetFoundSound.pause();
+          targetFoundSound.currentTime = 0;
+
+          try {
+            await targetFoundSound.play();
+          } catch (error) {
+            /*
+             * Some mobile browsers block audio until the user has interacted
+             * with the page. The next targetFound event can play after a tap.
+             */
+            console.warn("Target sound could not be played:", error);
+          }
         });
 
         target.addEventListener("targetLost", () => {
           console.log("Target lost.");
+
+          // Stop the looping sound as soon as the target is no longer tracked.
+          targetFoundSound.pause();
+          targetFoundSound.currentTime = 0;
         });
       });
     </script>
