@@ -12,6 +12,7 @@
 
     <!-- MindAR 1.2.5 officially documents A-Frame 1.5.0 -->
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.0/dist/aframe-extras.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
     <style>
@@ -188,6 +189,24 @@
           crossorigin="anonymous"
           src="https://raw.githubusercontent.com/yonhonng/junk_code/main/model.glb"
         ></a-asset-item>
+
+        <a-asset-item
+          id="plants"
+          crossorigin="anonymous"
+          src="https://raw.githubusercontent.com/yonhonng/junk_code/main/plants.glb"
+        ></a-asset-item>
+
+        <a-asset-item
+          id="water"
+          crossorigin="anonymous"
+          src="https://raw.githubusercontent.com/yonhonng/junk_code/main/water.glb"
+        ></a-asset-item>
+
+        <a-asset-item
+          id="koi"
+          crossorigin="anonymous"
+          src="https://raw.githubusercontent.com/yonhonng/junk_code/main/koi_fish.glb"
+        ></a-asset-item>
       </a-assets>
 
       <a-camera
@@ -201,7 +220,7 @@
       >
         <a-plane
           src="#card"
-          position="0 0 -0.1"
+          position="0 0 -0.2"
           rotation="0 0 0"
           width="0.5"
           height="0.313"
@@ -220,6 +239,51 @@
           position="0 0 0.1"
           rotation="90 0 0"
           scale="1.5 1.5 1.5"
+        ></a-gltf-model>
+
+        <a-gltf-model
+          src="#plants"
+          position="0 0 0.1"
+          rotation="90 0 0"
+          scale="1.5 1.5 1.5"
+        ></a-gltf-model>
+
+        <a-gltf-model
+          src="#water"
+          position="0 0 0.1"
+          rotation="90 0 0"
+          scale="1.5 1.5 1.5"
+          animation-mixer
+        ></a-gltf-model>
+
+        <a-gltf-model
+          src="#koi"
+          position="-0.2 0 -0.1"
+          rotation="90 30 0"
+          scale="0.05 0.05 0.05"
+          animation="
+            property: position; 
+            to: 0 0.1 -0.15; 
+            dur: 10000; 
+            easing: easeInOutQuad; 
+            loop: true; 
+            dir: alternate"
+          animation-mixer
+        ></a-gltf-model>
+
+        <a-gltf-model
+          src="#koi"
+          position="0.2 0 -0.1"
+          rotation="-90 0 180"
+          scale="0.05 0.05 0.05"
+          animation="
+            property: position; 
+            to: 0 -0.15 -0.1; 
+            dur: 10000; 
+            easing: easeInOutQuad; 
+            loop: true; 
+            dir: alternate"
+          animation-mixer
         ></a-gltf-model>
       </a-entity>
     </a-scene>
