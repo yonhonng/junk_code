@@ -23,7 +23,6 @@
         overflow: hidden;
 
         /*
-         * Important:
          * Do not use an opaque background here.
          * The camera video is displayed behind the A-Frame canvas.
          */
@@ -157,13 +156,14 @@
     </div>
 
     <a-scene
+      id="ar-scene"
       mindar-image="
-        imageTargetSrc: https://raw.githubusercontent.com/yonhonng/junk_code/main/targets.mind;
+        imageTargetSrc: https://raw.githubusercontent.com/yonhonng/junk_code/main/QR.mind;
         uiScanning: #scanning-overlay;
         autoStart: true;
 
-        filterMinCF: 0.05;
-        filterBeta: 100;
+        filterMinCF: 0.0001;
+        filterBeta: 500;
 
         warmupTolerance: 1;
         missTolerance: 3;
@@ -203,7 +203,7 @@
           src="#card"
           position="0 0 -0.1"
           rotation="0 0 0"
-          width="1"
+          width="0.5"
           height="0.313"
           material="
             shader: flat;
@@ -219,21 +219,209 @@
           src="#avatarModel"
           position="0 0 0.1"
           rotation="90 0 0"
-          scale="2.0 2.0 2.0"
-          "
+          scale="1.5 1.5 1.5"
         ></a-gltf-model>
       </a-entity>
     </a-scene>
 
     <script>
       document.addEventListener("DOMContentLoaded", () => {
-        const scene = document.querySelector("a-scene");
+        const scene = document.querySelector("#ar-scene");
         const target = document.querySelector("#image-target");
         const errorMessage = document.querySelector("#error-message");
 
-        scene.addEventListener("arReady", () => {
+        /**
+         * MindAR creates its camera video element internally.
+         * Wait until that video and its MediaStreamTrack are available.
+         */
+        async function waitForCameraTrack(maxFrames = 120) {
+          for (let frame = 0; frame < maxFrames; frame += 1) {
+            const videos = [...document.querySelectorAll("video")];
+
+            const video = videos.find((element) => {
+              return (
+                element.srcObject &&
+                typeof element.srcObject.getVideoTracks === "function" &&
+                element.srcObject.getVideoTracks().length > 0
+              );
+            });
+
+            if (video) {
+              const track = video.srcObject.getVideoTracks()[0];
+
+              if (track) {
+                return { video, track };
+              }
+            }
+
+            await new Promise((resolve) => {
+              requestAnimationFrame(resolve);
+            });
+          }
+
+          throw new Error("MindAR camera track was not found.");
+        }
+
+        function supportsMode(capability, requestedMode) {
+          return (
+            Array.isArray(capability) &&
+            capability.includes(requestedMode)
+          );
+        }
+
+        async function improveMobileCamera() {
+          const { video, track } = await waitForCameraTrack();
+
+          /*
+           * These attributes help prevent fullscreen video behaviour on iOS.
+           */
+          video.setAttribute("playsinline", "");
+          video.setAttribute("webkit-playsinline", "");
+          video.muted = true;
+          video.autoplay = true;
+
+          /*
+           * Request a sensible balance between image quality and tracking
+           * performance. "ideal" allows the browser to choose the closest
+           * supported value instead of failing on devices that cannot provide it.
+           */
+          const resolutionConstraints = {
+            width: {
+              ideal: 1280
+            },
+            height: {
+              ideal: 720
+            },
+            aspectRatio: {
+              ideal: 16 / 9
+            },
+            frameRate: {
+              ideal: 30,
+              max: 30
+            }
+          };
+
+          try {
+            await track.applyConstraints(resolutionConstraints);
+          } catch (error) {
+            /*
+             * Continue using the browser-selected camera settings if the
+             * requested resolution is unsupported.
+             */
+            console.warn(
+              "Could not apply the requested camera resolution:",
+              error
+            );
+          }
+
+          /*
+           * Apply optional camera controls only when the current phone and
+           * browser report that they support them.
+           */
+          if (typeof track.getCapabilities === "function") {
+            const capabilities = track.getCapabilities();
+            const advancedSettings = {};
+
+            if (
+              supportsMode(capabilities.focusMode, "continuous")
+            ) {
+              advancedSettings.focusMode = "continuous";
+            }
+
+            if (
+              supportsMode(capabilities.exposureMode, "continuous")
+            ) {
+              advancedSettings.exposureMode = "continuous";
+            }
+
+            if (
+              supportsMode(
+                capabilities.whiteBalanceMode,
+                "continuous"
+              )
+            ) {
+              advancedSettings.whiteBalanceMode = "continuous";
+            }
+
+            /*
+             * Keep browser-controlled zoom at 1× where supported.
+             * This avoids unnecessary digital zoom and image degradation.
+             */
+            if (
+              capabilities.zoom &&
+              typeof capabilities.zoom.min === "number" &&
+              typeof capabilities.zoom.max === "number" &&
+              capabilities.zoom.min <= 1 &&
+              capabilities.zoom.max >= 1
+            ) {
+              advancedSettings.zoom = 1;
+            }
+
+            if (Object.keys(advancedSettings).length > 0) {
+              try {
+                await track.applyConstraints({
+                  advanced: [advancedSettings]
+                });
+              } catch (error) {
+                console.warn(
+                  "Optional camera controls could not be applied:",
+                  error
+                );
+              }
+            }
+          }
+
+          try {
+            await video.play();
+          } catch (error) {
+            console.warn("Camera video could not be explicitly played:", error);
+          }
+
+          if (typeof track.getSettings === "function") {
+            const settings = track.getSettings();
+
+            console.log("Active camera settings:", settings);
+            console.log(
+              `Camera resolution: ${settings.width ?? "unknown"} × ${
+                settings.height ?? "unknown"
+              }`
+            );
+            console.log(
+              `Camera frame rate: ${settings.frameRate ?? "unknown"}`
+            );
+            console.log(
+              `Camera facing mode: ${settings.facingMode ?? "unknown"}`
+            );
+
+            if (
+              settings.width &&
+              settings.height &&
+              (settings.width < 1000 || settings.height < 700)
+            ) {
+              console.warn(
+                "The browser selected a relatively low camera resolution. " +
+                  "Image tracking may be less stable."
+              );
+            }
+          }
+        }
+
+        scene.addEventListener("arReady", async () => {
           console.log("MindAR is ready.");
           errorMessage.classList.add("hidden");
+
+          try {
+            await improveMobileCamera();
+          } catch (error) {
+            /*
+             * MindAR may still work even if the additional camera constraints
+             * cannot be applied, so this does not show the full-screen error.
+             */
+            console.warn(
+              "MindAR started, but camera optimisation failed:",
+              error
+            );
+          }
         });
 
         scene.addEventListener("arError", (event) => {
