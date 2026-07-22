@@ -255,7 +255,7 @@
         filterBeta: 500;
 
         warmupTolerance: 1;
-        missTolerance: 3;
+        missTolerance: 30;
       "
       color-space="sRGB"
       renderer="
@@ -294,6 +294,12 @@
           id="koi"
           crossorigin="anonymous"
           src="https://raw.githubusercontent.com/yonhonng/junk_code/main/koi_fish.glb"
+        ></a-asset-item>
+
+        <a-asset-item
+          id="seaweed"
+          crossorigin="anonymous"
+          src="https://raw.githubusercontent.com/yonhonng/junk_code/main/seaweed.glb"
         ></a-asset-item>
 
         <audio
@@ -350,6 +356,20 @@
           rotation="90 0 0"
           scale="1.5 1.5 1.5"
           animation-mixer
+        ></a-gltf-model>
+
+        <a-gltf-model
+          src="#seaweed"
+          position="-0.3 -0.15 -0.25"
+          rotation="90 0 0"
+          scale="0.15 0.15 0.15"
+        ></a-gltf-model>
+
+        <a-gltf-model
+          src="#seaweed"
+          position="0.15 0.1 -0.25"
+          rotation="50 0 0"
+          scale="0.12 0.12 0.12"
         ></a-gltf-model>
 
         <a-gltf-model
