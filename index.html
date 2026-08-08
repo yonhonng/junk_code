@@ -693,30 +693,46 @@
           visibility 0s linear 0s;
       }
 
-      /* Error message shown if camera startup fails */
+      /*
+       * Non-blocking camera warning. Camera access is optional for manual mode,
+       * so a camera failure must never cover the 3D canvas or intercept gestures.
+       */
       #error-message {
         position: fixed;
-        inset: 0;
-        z-index: 2000;
+        left: 50%;
+        bottom: max(82px, calc(env(safe-area-inset-bottom) + 82px));
+        z-index: 1550;
 
-        display: flex;
-        align-items: center;
-        justify-content: center;
-
-        padding: 24px;
+        width: min(90vw, 560px);
         box-sizing: border-box;
+        padding: 10px 14px;
+        transform: translateX(-50%);
 
         color: white;
-        background: rgba(0, 0, 0, 0.9);
+        background: rgba(20, 24, 28, 0.82);
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
 
         font-family: Arial, sans-serif;
-        font-size: 17px;
-        line-height: 1.5;
+        font-size: 14px;
+        line-height: 1.4;
         text-align: center;
+
+        pointer-events: none;
+        user-select: none;
       }
 
       #error-message.hidden {
         display: none;
+      }
+
+      /* Give camera-less manual mode a neutral backdrop behind the transparent canvas. */
+      body.camera-unavailable {
+        background:
+          radial-gradient(circle at 50% 35%, rgba(53, 70, 78, 0.96), rgba(18, 24, 29, 0.99));
       }
 
       /* Shared control bar */
@@ -1034,15 +1050,15 @@
       Point the camera at the target to snap the model into AR
     </div>
 
-    <div id="error-message" class="hidden">
-      The camera could not be started. Check that camera permission is allowed
-      and that this page is running through HTTPS or localhost.
+    <div id="error-message" class="hidden" role="status" aria-live="polite">
+      Camera unavailable — manual 3D mode is still active. Allow camera access to use AR Snap.
     </div>
 
     <button
       id="ar-help-button"
       type="button"
-      aria-label="Show AR printing instructions"
+      aria-label="Show AR help and camera permission instructions"
+      title="AR help — allow camera access for Augmented Reality mode"
       aria-haspopup="dialog"
       aria-controls="ar-help-modal"
     >
@@ -1061,6 +1077,11 @@
           ×
         </button>
         <h2 id="ar-help-title">Try the Augmented Reality (AR)</h2>
+        <p style="margin-bottom: 12px;">
+          <strong>Allow camera access when your browser asks.</strong> AR Snap needs camera
+          permission to detect the printed target. If camera access is declined or unavailable,
+          you can still view and interact with the model in manual 3D mode.
+        </p>
         <p>
           Print the following image:
           <a
@@ -1081,7 +1102,7 @@
         uiLoading: no;
         uiScanning: no;
         uiError: no;
-        autoStart: true;
+        autoStart: false;
 
         filterMinCF: 0.0001;
         filterBeta: 0.1;
@@ -1277,6 +1298,7 @@
 
         let arEnabled = true;
         let mindArReady = false;
+        let arStartInFlight = false;
         let scanHintTimer = 0;
 
         const getHybridController = () =>
@@ -1353,6 +1375,53 @@
         document.addEventListener("pointerdown", tryPlayWaterSound, true);
         document.addEventListener("keydown", tryPlayWaterSound, true);
 
+        function showCameraFallback(message) {
+          mindArReady = false;
+          document.body.classList.add("camera-unavailable");
+
+          errorMessage.textContent =
+            message ||
+            "Camera unavailable — manual 3D mode is still active. Allow camera access to use AR Snap.";
+          errorMessage.classList.remove("hidden");
+
+          /*
+           * Camera access is only required for tracking. Keep the shared model tree
+           * visible and switch its controller to the normal manual transform.
+           */
+          setArEnabled(false);
+          contentRoot.object3D.visible = true;
+
+          const controller = getHybridController();
+          if (controller) {
+            controller.enterManualMode({ preserveCurrentPose: true });
+          }
+
+          syncWaterSound();
+        }
+
+        async function startArIfPossible() {
+          if (!arEnabled || mindArReady || arStartInFlight) {
+            return;
+          }
+
+          const arSystem = getArSystem();
+          if (!arSystem || typeof arSystem.start !== "function") {
+            return;
+          }
+
+          arStartInFlight = true;
+          errorMessage.classList.add("hidden");
+
+          try {
+            await arSystem.start();
+          } catch (error) {
+            console.error("MindAR failed to start:", error);
+            showCameraFallback();
+          } finally {
+            arStartInFlight = false;
+          }
+        }
+
         function updateArButton() {
           arToggle.setAttribute("aria-pressed", String(arEnabled));
           arToggle.setAttribute(
@@ -1381,6 +1450,14 @@
           }
 
           if (!mindArReady) {
+            if (arEnabled) {
+              /*
+               * With autoStart disabled, the page renders in manual mode first.
+               * Turning AR on (including the initial page state) then requests
+               * camera access without making the 3D experience depend on it.
+               */
+              void startArIfPossible();
+            }
             syncWaterSound();
             return;
           }
@@ -1462,10 +1539,23 @@
           }
         });
 
-        scene.addEventListener("loaded", syncWaterSound);
+        function handleSceneLoaded() {
+          syncWaterSound();
+
+          if (arEnabled) {
+            void startArIfPossible();
+          }
+        }
+
+        if (scene.hasLoaded) {
+          handleSceneLoaded();
+        } else {
+          scene.addEventListener("loaded", handleSceneLoaded, { once: true });
+        }
 
         scene.addEventListener("arReady", () => {
           mindArReady = true;
+          document.body.classList.remove("camera-unavailable");
           errorMessage.classList.add("hidden");
 
           const controller = getHybridController();
@@ -1498,7 +1588,7 @@
 
         scene.addEventListener("arError", (event) => {
           console.error("MindAR failed to start:", event);
-          errorMessage.classList.remove("hidden");
+          showCameraFallback();
         });
 
         target.addEventListener("targetFound", () => {
