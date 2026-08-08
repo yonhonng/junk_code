@@ -15,6 +15,617 @@
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.0/dist/aframe-extras.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
+    <script>
+      /*
+       * A single augmentation tree permanently owned by <a-scene>.
+       *
+       * Manual mode keeps a normal A-Frame transform.
+       * Snap mode follows MindAR's target transform without becoming a child
+       * of the target. Entering snap is blended briefly to avoid a large jump.
+       * Leaving snap preserves the exact last displayed pose/scale and makes
+       * that the new manual transform, so target loss causes no jump at all.
+       */
+      AFRAME.registerComponent("hybrid-ar-view", {
+        schema: {
+          target: { type: "selector" },
+          manualDepth: { type: "number", default: 50 },
+          defaultManualScale: { type: "number", default: 17 },
+          minScale: { type: "number", default: 0.2 },
+          maxScale: { type: "number", default: 4 },
+          snapTransitionMs: { type: "number", default: 380 }
+        },
+
+        init() {
+          this.snapEnabled = true;
+          this.tracking = false;
+          this.snapped = false;
+          this.snapTransitioning = false;
+          this.snapElapsed = 0;
+
+          this.manualZoom = 1;
+          this.manualPosition = new THREE.Vector3(0, 0, -this.data.manualDepth);
+          this.manualQuaternion = new THREE.Quaternion();
+          this.manualBaseScale = new THREE.Vector3().setScalar(
+            this.data.defaultManualScale
+          );
+          this.manualScale = this.manualBaseScale.clone();
+
+          /* Reused transition temporaries: no per-frame allocations. */
+          this.snapStartPosition = new THREE.Vector3();
+          this.snapStartQuaternion = new THREE.Quaternion();
+          this.snapStartScale = new THREE.Vector3();
+          this.targetPosition = new THREE.Vector3();
+          this.targetQuaternion = new THREE.Quaternion();
+          this.targetScale = new THREE.Vector3();
+
+          /* Projection captured before MindAR replaces/calibrates it. */
+          this.preArProjection = null;
+          this.projectionScratch = new THREE.Vector4();
+          this.unprojectScratch = new THREE.Vector4();
+          this.inverseProjectionScratch = new THREE.Matrix4();
+
+          this.rotationEuler = new THREE.Euler(0, 0, 0, "YXZ");
+
+          this.pointerState = new Map();
+          this.hasTwoFingerBaseline = false;
+          this.lastCenterX = 0;
+          this.lastCenterY = 0;
+          this.lastDistance = 1;
+          this.firstPointer = null;
+          this.secondPointer = null;
+
+          this.onRenderStart = this.onRenderStart.bind(this);
+          this.onPointerDown = this.onPointerDown.bind(this);
+          this.onPointerMove = this.onPointerMove.bind(this);
+          this.onPointerUp = this.onPointerUp.bind(this);
+          this.onWheel = this.onWheel.bind(this);
+          this.onContextMenu = this.onContextMenu.bind(this);
+          this.onTargetFound = this.onTargetFound.bind(this);
+          this.onTargetLost = this.onTargetLost.bind(this);
+
+          const object = this.el.object3D;
+          object.visible = true;
+          object.matrixAutoUpdate = true;
+          this.applyManualPose();
+
+          this.el.sceneEl.addEventListener("renderstart", this.onRenderStart);
+
+          if (this.data.target) {
+            this.data.target.addEventListener("targetFound", this.onTargetFound);
+            this.data.target.addEventListener("targetLost", this.onTargetLost);
+          }
+        },
+
+        remove() {
+          this.el.sceneEl.removeEventListener("renderstart", this.onRenderStart);
+
+          if (this.data.target) {
+            this.data.target.removeEventListener("targetFound", this.onTargetFound);
+            this.data.target.removeEventListener("targetLost", this.onTargetLost);
+          }
+
+          if (this.canvas) {
+            this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+            this.canvas.removeEventListener("pointermove", this.onPointerMove);
+            this.canvas.removeEventListener("pointerup", this.onPointerUp);
+            this.canvas.removeEventListener("pointercancel", this.onPointerUp);
+            this.canvas.removeEventListener("wheel", this.onWheel);
+            this.canvas.removeEventListener("contextmenu", this.onContextMenu);
+          }
+        },
+
+        tick(_time, delta) {
+          if (!this.snapped) {
+            return;
+          }
+
+          if (!this.snapEnabled || !this.tracking || !this.data.target) {
+            this.enterManualMode({ preserveCurrentPose: true });
+            return;
+          }
+
+          const targetObject = this.data.target.object3D;
+          const object = this.el.object3D;
+
+          if (this.snapTransitioning) {
+            /*
+             * Blend only while entering snap mode. The target can continue
+             * moving during the blend, so decompose its latest matrix each
+             * frame rather than blending toward a stale pose.
+             */
+            targetObject.matrix.decompose(
+              this.targetPosition,
+              this.targetQuaternion,
+              this.targetScale
+            );
+
+            this.snapElapsed += Math.min(Number.isFinite(delta) ? delta : 16.7, 50);
+            const duration = Math.max(1, this.data.snapTransitionMs);
+            const t = Math.min(1, this.snapElapsed / duration);
+            const eased = 1 - Math.pow(1 - t, 3);
+
+            object.position.lerpVectors(
+              this.snapStartPosition,
+              this.targetPosition,
+              eased
+            );
+            object.quaternion
+              .copy(this.snapStartQuaternion)
+              .slerp(this.targetQuaternion, eased);
+            object.scale.lerpVectors(
+              this.snapStartScale,
+              this.targetScale,
+              eased
+            );
+            object.visible = true;
+            object.updateMatrix();
+            object.matrixWorldNeedsUpdate = true;
+
+            if (t < 1) {
+              return;
+            }
+
+            this.snapTransitioning = false;
+            object.matrixAutoUpdate = false;
+          }
+
+          /* Fully snapped: one 4x4 matrix copy per frame. */
+          object.matrix.copy(targetObject.matrix);
+          object.matrixWorldNeedsUpdate = true;
+          object.visible = true;
+        },
+
+        onRenderStart() {
+          const canvas = this.el.sceneEl.canvas;
+
+          if (!canvas || this.canvas === canvas) {
+            return;
+          }
+
+          this.canvas = canvas;
+          canvas.style.touchAction = "none";
+
+          const camera = this.el.sceneEl.camera;
+          if (camera && camera.projectionMatrix && !this.preArProjection) {
+            this.preArProjection = camera.projectionMatrix.clone();
+          }
+
+          canvas.addEventListener("pointerdown", this.onPointerDown);
+          canvas.addEventListener("pointermove", this.onPointerMove);
+          canvas.addEventListener("pointerup", this.onPointerUp);
+          canvas.addEventListener("pointercancel", this.onPointerUp);
+          canvas.addEventListener("wheel", this.onWheel, { passive: false });
+          canvas.addEventListener("contextmenu", this.onContextMenu);
+        },
+
+        onTargetFound() {
+          if (!this.snapEnabled) {
+            return;
+          }
+
+          this.tracking = true;
+          this.enterSnapMode();
+        },
+
+        onTargetLost() {
+          this.tracking = false;
+
+          /*
+           * Critical behavior: preserve the exact pose currently on-screen.
+           * No return-to-centre and no return to an older manual transform.
+           */
+          this.enterManualMode({ preserveCurrentPose: true });
+        },
+
+        enterSnapMode() {
+          if (!this.snapEnabled || !this.tracking || !this.data.target) {
+            return;
+          }
+
+          const object = this.el.object3D;
+
+          /* Start the blend from exactly what the user is currently seeing. */
+          object.matrixAutoUpdate = true;
+          object.updateMatrix();
+          this.snapStartPosition.copy(object.position);
+          this.snapStartQuaternion.copy(object.quaternion);
+          this.snapStartScale.copy(object.scale);
+
+          this.snapped = true;
+          this.snapTransitioning = this.data.snapTransitionMs > 0;
+          this.snapElapsed = 0;
+          object.visible = true;
+          this.clearPointerState();
+
+          if (!this.snapTransitioning) {
+            object.matrixAutoUpdate = false;
+          }
+        },
+
+        captureCurrentPoseAsManual() {
+          const object = this.el.object3D;
+
+          /*
+           * matrix is authoritative when fully snapped; position/quaternion/
+           * scale are authoritative during the entry blend. Normalize both
+           * cases into one matrix, then decompose once.
+           */
+          if (object.matrixAutoUpdate) {
+            object.updateMatrix();
+          }
+
+          object.matrix.decompose(
+            this.manualPosition,
+            this.manualQuaternion,
+            this.manualScale
+          );
+
+          /* New manual zoom baseline is exactly the captured snap scale. */
+          this.manualBaseScale.copy(this.manualScale);
+          this.manualZoom = 1;
+        },
+
+        enterManualMode({ preserveCurrentPose = false } = {}) {
+          const object = this.el.object3D;
+
+          if (preserveCurrentPose && this.snapped) {
+            this.captureCurrentPoseAsManual();
+          }
+
+          this.snapped = false;
+          this.snapTransitioning = false;
+          this.snapElapsed = 0;
+          object.matrixAutoUpdate = true;
+          this.applyManualPose();
+          this.clearPointerState();
+        },
+
+        setSnapEnabled(isEnabled) {
+          const nextEnabled = Boolean(isEnabled);
+
+          if (this.snapEnabled === nextEnabled) {
+            return;
+          }
+
+          this.snapEnabled = nextEnabled;
+
+          if (!this.snapEnabled) {
+            /* AR Off also preserves the currently displayed snapped pose. */
+            this.tracking = false;
+            this.enterManualMode({ preserveCurrentPose: true });
+          }
+        },
+
+        forceManualView() {
+          this.tracking = false;
+          this.enterManualMode({ preserveCurrentPose: false });
+        },
+
+        /*
+         * MindAR swaps in a calibrated projection after camera permission.
+         * Keep the same NDC position and projected size across that swap.
+         * Because the camera is configured with MindAR-like near/far/FOV from
+         * page load, this correction is usually small and happens only once.
+         */
+        stabilizeManualViewForActiveProjection() {
+          const camera = this.el.sceneEl.camera;
+          if (!camera || !camera.projectionMatrix || !this.preArProjection) {
+            return;
+          }
+
+          const oldProjection = this.preArProjection;
+          const newProjection = camera.projectionMatrix;
+          const oldE = oldProjection.elements;
+          const newE = newProjection.elements;
+
+          const oldDepth = Math.max(0.001, Math.abs(this.manualPosition.z));
+
+          this.projectionScratch
+            .set(
+              this.manualPosition.x,
+              this.manualPosition.y,
+              this.manualPosition.z,
+              1
+            )
+            .applyMatrix4(oldProjection);
+
+          const w = this.projectionScratch.w;
+          const ndcX = Math.abs(w) > 1e-8 ? this.projectionScratch.x / w : 0;
+          const ndcY = Math.abs(w) > 1e-8 ? this.projectionScratch.y / w : 0;
+
+          /* Derive MindAR's near plane from the active perspective matrix. */
+          let near = Math.abs(newE[14] / (newE[10] - 1));
+          if (!Number.isFinite(near) || near <= 0) {
+            near = 10;
+          }
+
+          const newDepth = Math.max(this.data.manualDepth, near * 5);
+
+          this.inverseProjectionScratch.copy(newProjection).invert();
+          this.unprojectScratch
+            .set(ndcX, ndcY, 0, 1)
+            .applyMatrix4(this.inverseProjectionScratch);
+
+          if (Math.abs(this.unprojectScratch.w) > 1e-8) {
+            this.unprojectScratch.multiplyScalar(1 / this.unprojectScratch.w);
+          }
+
+          const rayZ = this.unprojectScratch.z;
+          if (Number.isFinite(rayZ) && Math.abs(rayZ) > 1e-8) {
+            const depthFactor = -newDepth / rayZ;
+            this.manualPosition.set(
+              this.unprojectScratch.x * depthFactor,
+              this.unprojectScratch.y * depthFactor,
+              -newDepth
+            );
+          } else {
+            this.manualPosition.z = -newDepth;
+          }
+
+          /* Preserve apparent vertical size through the projection change. */
+          const oldProjectionY = Math.abs(oldE[5]);
+          const newProjectionY = Math.abs(newE[5]);
+          if (
+            Number.isFinite(oldProjectionY) &&
+            Number.isFinite(newProjectionY) &&
+            oldProjectionY > 0 &&
+            newProjectionY > 0
+          ) {
+            const sizeFactor =
+              (oldProjectionY / newProjectionY) * (newDepth / oldDepth);
+            this.manualBaseScale.multiplyScalar(sizeFactor);
+            this.manualScale.multiplyScalar(sizeFactor);
+          }
+
+          this.preArProjection.copy(newProjection);
+
+          if (this.isManualMode()) {
+            this.applyManualPose();
+          }
+        },
+
+        isManualMode() {
+          return !this.snapped;
+        },
+
+        getScreenCenterAtDepth(depth) {
+          const camera = this.el.sceneEl.camera;
+          if (!camera || !camera.projectionMatrix) {
+            this.manualPosition.set(0, 0, -depth);
+            return;
+          }
+
+          this.inverseProjectionScratch.copy(camera.projectionMatrix).invert();
+          this.unprojectScratch
+            .set(0, 0, 0, 1)
+            .applyMatrix4(this.inverseProjectionScratch);
+
+          if (Math.abs(this.unprojectScratch.w) > 1e-8) {
+            this.unprojectScratch.multiplyScalar(1 / this.unprojectScratch.w);
+          }
+
+          if (Math.abs(this.unprojectScratch.z) <= 1e-8) {
+            this.manualPosition.set(0, 0, -depth);
+            return;
+          }
+
+          const factor = -depth / this.unprojectScratch.z;
+          this.manualPosition.set(
+            this.unprojectScratch.x * factor,
+            this.unprojectScratch.y * factor,
+            -depth
+          );
+        },
+
+        resetFreeView({ resetRotation = true } = {}) {
+          this.getScreenCenterAtDepth(this.data.manualDepth);
+          this.manualZoom = 1;
+          this.manualBaseScale.setScalar(this.data.defaultManualScale);
+          this.manualScale.copy(this.manualBaseScale);
+
+          if (resetRotation) {
+            this.manualQuaternion.identity();
+          }
+
+          if (this.isManualMode()) {
+            this.applyManualPose();
+          }
+        },
+
+        applyManualPose() {
+          if (!this.isManualMode()) {
+            return;
+          }
+
+          const object = this.el.object3D;
+          object.position.copy(this.manualPosition);
+          object.quaternion.copy(this.manualQuaternion);
+          object.scale.copy(this.manualScale);
+          object.visible = true;
+          object.updateMatrix();
+          object.matrixWorldNeedsUpdate = true;
+        },
+
+        clearPointerState() {
+          this.pointerState.clear();
+          this.hasTwoFingerBaseline = false;
+        },
+
+        onPointerDown(event) {
+          if (!this.isManualMode()) {
+            return;
+          }
+
+          event.preventDefault();
+
+          if (this.canvas && this.canvas.setPointerCapture) {
+            try {
+              this.canvas.setPointerCapture(event.pointerId);
+            } catch (_) {
+              /* Pointer capture is optional on some mobile browsers. */
+            }
+          }
+
+          const panWithMouse =
+            event.pointerType === "mouse" &&
+            (event.button === 2 || event.shiftKey);
+
+          this.pointerState.set(event.pointerId, {
+            x: event.clientX,
+            y: event.clientY,
+            mode: panWithMouse ? "pan" : "rotate"
+          });
+
+          this.refreshTwoFingerBaseline();
+        },
+
+        onPointerMove(event) {
+          if (!this.isManualMode()) {
+            return;
+          }
+
+          const pointer = this.pointerState.get(event.pointerId);
+          if (!pointer) {
+            return;
+          }
+
+          event.preventDefault();
+
+          const previousX = pointer.x;
+          const previousY = pointer.y;
+          pointer.x = event.clientX;
+          pointer.y = event.clientY;
+
+          if (this.pointerState.size >= 2) {
+            this.applyTwoFingerGesture();
+            this.applyManualPose();
+            return;
+          }
+
+          const dx = pointer.x - previousX;
+          const dy = pointer.y - previousY;
+
+          if (pointer.mode === "pan") {
+            this.panByPixels(dx, dy);
+          } else {
+            this.rotateByPixels(dx, dy);
+          }
+
+          this.applyManualPose();
+        },
+
+        onPointerUp(event) {
+          this.pointerState.delete(event.pointerId);
+          this.refreshTwoFingerBaseline();
+        },
+
+        onWheel(event) {
+          if (!this.isManualMode()) {
+            return;
+          }
+
+          event.preventDefault();
+          this.scaleBy(Math.exp(-event.deltaY * 0.0012));
+          this.applyManualPose();
+        },
+
+        onContextMenu(event) {
+          if (this.isManualMode()) {
+            event.preventDefault();
+          }
+        },
+
+        readFirstTwoPointers() {
+          const iterator = this.pointerState.values();
+          this.firstPointer = iterator.next().value;
+          this.secondPointer = iterator.next().value;
+          return Boolean(this.firstPointer && this.secondPointer);
+        },
+
+        refreshTwoFingerBaseline() {
+          if (!this.readFirstTwoPointers()) {
+            this.hasTwoFingerBaseline = false;
+            return;
+          }
+
+          const dx = this.secondPointer.x - this.firstPointer.x;
+          const dy = this.secondPointer.y - this.firstPointer.y;
+
+          this.lastCenterX = (this.firstPointer.x + this.secondPointer.x) * 0.5;
+          this.lastCenterY = (this.firstPointer.y + this.secondPointer.y) * 0.5;
+          this.lastDistance = Math.max(1, Math.hypot(dx, dy));
+          this.hasTwoFingerBaseline = true;
+        },
+
+        applyTwoFingerGesture() {
+          if (!this.readFirstTwoPointers()) {
+            return;
+          }
+
+          const dx = this.secondPointer.x - this.firstPointer.x;
+          const dy = this.secondPointer.y - this.firstPointer.y;
+          const centerX = (this.firstPointer.x + this.secondPointer.x) * 0.5;
+          const centerY = (this.firstPointer.y + this.secondPointer.y) * 0.5;
+          const distance = Math.max(1, Math.hypot(dx, dy));
+
+          if (!this.hasTwoFingerBaseline) {
+            this.lastCenterX = centerX;
+            this.lastCenterY = centerY;
+            this.lastDistance = distance;
+            this.hasTwoFingerBaseline = true;
+            return;
+          }
+
+          this.panByPixels(centerX - this.lastCenterX, centerY - this.lastCenterY);
+          this.scaleBy(distance / this.lastDistance);
+
+          this.lastCenterX = centerX;
+          this.lastCenterY = centerY;
+          this.lastDistance = distance;
+        },
+
+        rotateByPixels(dx, dy) {
+          this.rotationEuler.setFromQuaternion(this.manualQuaternion, "YXZ");
+          this.rotationEuler.y += dx * 0.006;
+          this.rotationEuler.x += dy * 0.006;
+          this.manualQuaternion.setFromEuler(this.rotationEuler);
+        },
+
+        panByPixels(dx, dy) {
+          if (!this.canvas) {
+            return;
+          }
+
+          const camera = this.el.sceneEl.camera;
+          const projectionY =
+            camera && camera.projectionMatrix
+              ? Math.abs(camera.projectionMatrix.elements[5])
+              : 1;
+          const depth = Math.max(0.25, Math.abs(this.manualPosition.z));
+          const visibleHeight = 2 * depth / Math.max(0.0001, projectionY);
+          const unitsPerPixel =
+            visibleHeight / Math.max(1, this.canvas.clientHeight);
+
+          this.manualPosition.x += dx * unitsPerPixel;
+          this.manualPosition.y -= dy * unitsPerPixel;
+        },
+
+        updateManualScale() {
+          this.manualScale.copy(this.manualBaseScale).multiplyScalar(this.manualZoom);
+        },
+
+        scaleBy(factor) {
+          this.manualZoom = THREE.MathUtils.clamp(
+            this.manualZoom * factor,
+            this.data.minScale,
+            this.data.maxScale
+          );
+          this.updateManualScale();
+        }
+      });
+    </script>
+
+
     <style>
       html,
       body {
@@ -30,86 +641,53 @@
         background: transparent;
       }
 
-      /* Custom scanning overlay */
-      #scanning-overlay {
+      /*
+       * Small, temporary scan hint. Unlike MindAR's scanning overlay this never
+       * covers or dims the 3D view and does not intercept mouse/touch input.
+       */
+      #scan-hint {
         position: fixed;
-        inset: 0;
-        z-index: 1000;
-
-        display: flex;
-        align-items: center;
-        justify-content: center;
-
-        pointer-events: none;
-      }
-
-      #scanning-overlay.hidden {
-        display: none;
-      }
-
-      .scan-frame {
-        position: relative;
-
-        /*
-         * Large rectangular scanning guide.
-         * The ratio matches a width-1, height-0.552 target.
-         */
-        width: min(90vw, 78vh);
-        aspect-ratio: 1 / 0.552;
-
-        box-sizing: border-box;
-        border: 4px solid white;
-        border-radius: 18px;
-
-        box-shadow:
-          0 0 0 9999px rgba(0, 0, 0, 0.3),
-          0 0 20px rgba(255, 255, 255, 0.8);
-      }
-
-      .scan-line {
-        position: absolute;
-        top: 10%;
-        left: 5%;
-
-        width: 90%;
-        height: 3px;
-
-        background: white;
-        box-shadow: 0 0 10px white;
-
-        animation: scan 2s ease-in-out infinite alternate;
-      }
-
-      @keyframes scan {
-        from {
-          top: 10%;
-        }
-
-        to {
-          top: 90%;
-        }
-      }
-
-      .scan-message {
-        position: absolute;
         left: 50%;
-        bottom: 7vh;
+        bottom: max(22px, env(safe-area-inset-bottom));
+        z-index: 1200;
 
-        transform: translateX(-50%);
-
-        width: max-content;
-        max-width: 85vw;
+        max-width: min(82vw, 420px);
         box-sizing: border-box;
+        padding: 8px 13px;
 
-        padding: 10px 16px;
-
-        color: white;
-        background: rgba(0, 0, 0, 0.65);
-        border-radius: 8px;
+        color: rgba(255, 255, 255, 0.96);
+        background: rgba(20, 24, 28, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        border-radius: 999px;
+        box-shadow: 0 5px 18px rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(7px);
+        -webkit-backdrop-filter: blur(7px);
 
         font-family: Arial, sans-serif;
-        font-size: 16px;
+        font-size: 13px;
+        line-height: 1.35;
         text-align: center;
+
+        pointer-events: none;
+        user-select: none;
+
+        opacity: 0;
+        visibility: hidden;
+        transform: translate(-50%, 8px);
+        transition:
+          opacity 220ms ease,
+          transform 220ms ease,
+          visibility 0s linear 220ms;
+      }
+
+      #scan-hint.visible {
+        opacity: 1;
+        visibility: visible;
+        transform: translate(-50%, 0);
+        transition:
+          opacity 220ms ease,
+          transform 220ms ease,
+          visibility 0s linear 0s;
       }
 
       /* Error message shown if camera startup fails */
@@ -138,24 +716,37 @@
         display: none;
       }
 
-      /* Top-left Aquaponics koi visibility toggle */
-      #aquaponics-toggle {
+      /* Shared control bar */
+      #control-panel {
         position: fixed;
         top: max(16px, env(safe-area-inset-top));
         left: max(16px, env(safe-area-inset-left));
+        right: max(16px, env(safe-area-inset-right));
         z-index: 1500;
 
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+
+        pointer-events: none;
+      }
+
+      .control-pill {
         display: inline-flex;
         align-items: center;
         gap: 10px;
 
         min-height: 46px;
-        padding: 10px 16px 10px 12px;
+        padding: 10px 16px;
         border: 1px solid rgba(255, 255, 255, 0.55);
         border-radius: 999px;
 
         color: white;
-        background: linear-gradient(135deg, rgba(20, 153, 124, 0.94), rgba(0, 102, 153, 0.94));
+        background: linear-gradient(
+          135deg,
+          rgba(20, 153, 124, 0.94),
+          rgba(0, 102, 153, 0.94)
+        );
         box-shadow:
           0 8px 24px rgba(0, 0, 0, 0.3),
           inset 0 1px 0 rgba(255, 255, 255, 0.28);
@@ -168,6 +759,7 @@
         letter-spacing: 0.2px;
 
         cursor: pointer;
+        pointer-events: auto;
         user-select: none;
         -webkit-tap-highlight-color: transparent;
         transition:
@@ -177,7 +769,11 @@
           opacity 160ms ease;
       }
 
-      #aquaponics-toggle::before {
+      .control-pill.toggle {
+        padding-left: 12px;
+      }
+
+      .control-pill.toggle::before {
         content: "";
         width: 12px;
         height: 12px;
@@ -191,52 +787,78 @@
           box-shadow 160ms ease;
       }
 
-      #aquaponics-toggle:hover {
+      .control-pill:hover {
         transform: translateY(-1px);
         box-shadow:
           0 10px 28px rgba(0, 0, 0, 0.36),
           inset 0 1px 0 rgba(255, 255, 255, 0.28);
       }
 
-      #aquaponics-toggle:active {
+      .control-pill:active {
         transform: translateY(1px) scale(0.98);
       }
 
-      #aquaponics-toggle:focus-visible {
+      .control-pill:focus-visible {
         outline: 3px solid rgba(255, 255, 255, 0.95);
         outline-offset: 3px;
       }
 
-      #aquaponics-toggle[aria-pressed="false"] {
+      .control-pill.toggle[aria-pressed="false"] {
         background: rgba(35, 42, 49, 0.88);
-        opacity: 0.82;
+        opacity: 0.9;
       }
 
-      #aquaponics-toggle[aria-pressed="false"]::before {
+      .control-pill.toggle[aria-pressed="false"]::before {
         background: transparent;
         box-shadow: none;
+      }
+
+      #reset-view {
+        background: rgba(35, 42, 49, 0.88);
+      }
+
+      /* AR-off mode should not display the temporary scan hint. */
+      body.manual-mode #scan-hint {
+        opacity: 0;
+        visibility: hidden;
       }
     </style>
   </head>
 
   <body>
-    <button
-      id="aquaponics-toggle"
-      type="button"
-      aria-pressed="true"
-      aria-label="Hide aquaponics koi"
-    >
-      Aquaponics
-    </button>
+    <div id="control-panel">
+      <button
+        id="ar-toggle"
+        class="control-pill toggle"
+        type="button"
+        aria-pressed="true"
+        aria-label="Turn AR snapping off"
+      >
+        AR Snap
+      </button>
 
-    <div id="scanning-overlay" class="hidden">
-      <div class="scan-frame">
-        <div class="scan-line"></div>
-      </div>
+      <button
+        id="reset-view"
+        class="control-pill"
+        type="button"
+        aria-label="Reset the model view"
+      >
+        Reset View
+      </button>
 
-      <div class="scan-message">
-        Point the camera at the target image
-      </div>
+      <button
+        id="aquaponics-toggle"
+        class="control-pill toggle"
+        type="button"
+        aria-pressed="true"
+        aria-label="Hide aquaponics koi"
+      >
+        Aquaponics
+      </button>
+    </div>
+
+    <div id="scan-hint" role="status" aria-live="polite">
+      Point the camera at the target to snap the model into AR
     </div>
 
     <div id="error-message" class="hidden">
@@ -248,15 +870,18 @@
       id="ar-scene"
       mindar-image="
         imageTargetSrc: https://raw.githubusercontent.com/yonhonng/junk_code/main/QR.mind;
-        uiScanning: #scanning-overlay;
+        uiLoading: no;
+        uiScanning: no;
+        uiError: no;
         autoStart: true;
 
         filterMinCF: 0.0001;
         filterBeta: 0.1;
 
-        warmupTolerance: 1;
-        missTolerance: 30;
+        warmupTolerance: 5;
+        missTolerance: 5;
       "
+      loading-screen="enabled: false"
       color-space="sRGB"
       renderer="
         colorManagement: true;
@@ -303,7 +928,7 @@
         ></a-asset-item>
 
         <audio
-          id="target-found-sound"
+          id="water-sound"
           crossorigin="anonymous"
           preload="auto"
           loop
@@ -312,13 +937,33 @@
       </a-assets>
 
       <a-camera
+        id="ar-camera"
         position="0 0 0"
+        camera="near: 10; far: 100000; fov: 45"
         look-controls="enabled: false"
       ></a-camera>
 
+      <!--
+        MindAR owns only the empty tracking anchor. The visible augmentation is
+        a single shared tree below, so there is never a duplicate set of GLTFs.
+        The component keeps that one Object3D in the scene and switches only its transform.
+      -->
       <a-entity
         id="image-target"
         mindar-image-target="targetIndex: 0"
+      ></a-entity>
+
+      <a-entity
+        id="content-root"
+        visible="true"
+        hybrid-ar-view="
+          target: #image-target;
+          manualDepth: 50;
+          defaultManualScale: 17;
+          minScale: 0.2;
+          maxScale: 4;
+          snapTransitionMs: 380;
+        "
       >
         <a-plane
           src="#card"
@@ -360,7 +1005,7 @@
 
         <a-gltf-model
           src="#seaweed"
-          position="-0.5 -0.22 0.0"
+          position="-0.5 -0.22 0.1"
           rotation="90 0 0"
           scale="0.22 0.22 0.22"
         ></a-gltf-model>
@@ -410,14 +1055,147 @@
       document.addEventListener("DOMContentLoaded", () => {
         const scene = document.querySelector("#ar-scene");
         const target = document.querySelector("#image-target");
+        const contentRoot = document.querySelector("#content-root");
         const errorMessage = document.querySelector("#error-message");
-        const targetFoundSound = document.querySelector("#target-found-sound");
+        const waterSound = document.querySelector("#water-sound");
         const aquaponicsToggle = document.querySelector("#aquaponics-toggle");
-        const koiModels = [...document.querySelectorAll(".koi-model")];
+        const arToggle = document.querySelector("#ar-toggle");
+        const resetViewButton = document.querySelector("#reset-view");
+        const scanHint = document.querySelector("#scan-hint");
+        const koiModels = document.querySelectorAll(".koi-model");
+
+        let arEnabled = true;
+        let mindArReady = false;
+        let scanHintTimer = 0;
+
+        const getHybridController = () =>
+          contentRoot.components["hybrid-ar-view"] || null;
+
+        const getArSystem = () =>
+          scene.systems ? scene.systems["mindar-image-system"] : null;
+
+        function hideScanHint() {
+          if (scanHintTimer) {
+            clearTimeout(scanHintTimer);
+            scanHintTimer = 0;
+          }
+          scanHint.classList.remove("visible");
+        }
+
+        function showScanHint(duration = 3500) {
+          if (!arEnabled) {
+            return;
+          }
+
+          hideScanHint();
+          scanHint.classList.add("visible");
+          scanHintTimer = window.setTimeout(hideScanHint, duration);
+        }
+
+        function modelIsVisible() {
+          return Boolean(
+            contentRoot &&
+            contentRoot.object3D &&
+            contentRoot.object3D.visible
+          );
+        }
+
+        function removeAudioUnlockListeners() {
+          document.removeEventListener("pointerdown", tryPlayWaterSound, true);
+          document.removeEventListener("keydown", tryPlayWaterSound, true);
+        }
+
+        async function tryPlayWaterSound() {
+          if (!modelIsVisible() || !waterSound.paused) {
+            if (!waterSound.paused) {
+              removeAudioUnlockListeners();
+            }
+            return;
+          }
+
+          try {
+            await waterSound.play();
+            removeAudioUnlockListeners();
+          } catch (error) {
+            /*
+             * Expected on mobile before the first page gesture. Keep the
+             * lightweight unlock listeners installed and retry on interaction.
+             */
+            if (error && error.name !== "NotAllowedError") {
+              console.warn("Water sound could not be played:", error);
+            }
+          }
+        }
+
+        function syncWaterSound() {
+          if (modelIsVisible()) {
+            void tryPlayWaterSound();
+          } else if (!waterSound.paused) {
+            waterSound.pause();
+          }
+        }
+
+        /*
+         * Audio follows model visibility, not target tracking. If autoplay is
+         * blocked, the first user pointer/key interaction unlocks it once.
+         */
+        document.addEventListener("pointerdown", tryPlayWaterSound, true);
+        document.addEventListener("keydown", tryPlayWaterSound, true);
+
+        function updateArButton() {
+          arToggle.setAttribute("aria-pressed", String(arEnabled));
+          arToggle.setAttribute(
+            "aria-label",
+            arEnabled ? "Turn AR snapping off" : "Turn AR snapping on"
+          );
+          arToggle.textContent = arEnabled ? "AR Snap" : "AR Off";
+          document.body.classList.toggle("manual-mode", !arEnabled);
+        }
+
+        function setArEnabled(isEnabled) {
+          arEnabled = Boolean(isEnabled);
+          updateArButton();
+
+          const controller = getHybridController();
+          if (controller) {
+            /*
+             * Turning AR off while snapped preserves the exact displayed snap
+             * pose and scale as the new manual pose.
+             */
+            controller.setSnapEnabled(arEnabled);
+          }
+
+          if (!arEnabled) {
+            hideScanHint();
+          }
+
+          if (!mindArReady) {
+            syncWaterSound();
+            return;
+          }
+
+          const arSystem = getArSystem();
+          if (!arSystem) {
+            syncWaterSound();
+            return;
+          }
+
+          if (arEnabled) {
+            arSystem.unpause();
+            showScanHint(2800);
+          } else {
+            arSystem.pause(true);
+
+            /* Require a fresh targetFound when snapping is enabled again. */
+            target.object3D.visible = false;
+          }
+
+          syncWaterSound();
+        }
 
         function setKoiVisibility(isEnabled) {
           koiModels.forEach((model) => {
-            model.setAttribute("visible", isEnabled);
+            model.object3D.visible = isEnabled;
           });
 
           aquaponicsToggle.setAttribute("aria-pressed", String(isEnabled));
@@ -427,208 +1205,59 @@
           );
         }
 
-        // The Aquaponics view starts enabled.
         setKoiVisibility(true);
+        updateArButton();
 
         aquaponicsToggle.addEventListener("click", () => {
-          const isCurrentlyEnabled =
-            aquaponicsToggle.getAttribute("aria-pressed") === "true";
-
-          setKoiVisibility(!isCurrentlyEnabled);
+          const isEnabled =
+            aquaponicsToggle.getAttribute("aria-pressed") !== "true";
+          setKoiVisibility(isEnabled);
         });
 
-        /**
-         * MindAR creates its camera video element internally.
-         * Wait until that video and its MediaStreamTrack are available.
-         */
-        async function waitForCameraTrack(maxFrames = 120) {
-          for (let frame = 0; frame < maxFrames; frame += 1) {
-            const videos = [...document.querySelectorAll("video")];
+        arToggle.addEventListener("click", () => {
+          setArEnabled(!arEnabled);
+        });
 
-            const video = videos.find((element) => {
-              return (
-                element.srcObject &&
-                typeof element.srcObject.getVideoTracks === "function" &&
-                element.srcObject.getVideoTracks().length > 0
-              );
-            });
-
-            if (video) {
-              const track = video.srcObject.getVideoTracks()[0];
-
-              if (track) {
-                return { video, track };
-              }
-            }
-
-            await new Promise((resolve) => {
-              requestAnimationFrame(resolve);
-            });
+        resetViewButton.addEventListener("click", () => {
+          const controller = getHybridController();
+          if (controller) {
+            controller.resetFreeView({ resetRotation: true });
           }
+          syncWaterSound();
+        });
 
-          throw new Error("MindAR camera track was not found.");
-        }
+        scene.addEventListener("loaded", syncWaterSound);
 
-        function supportsMode(capability, requestedMode) {
-          return (
-            Array.isArray(capability) &&
-            capability.includes(requestedMode)
-          );
-        }
-
-        async function improveMobileCamera() {
-          const { video, track } = await waitForCameraTrack();
-
-          /*
-           * These attributes help prevent fullscreen video behaviour on iOS.
-           */
-          video.setAttribute("playsinline", "");
-          video.setAttribute("webkit-playsinline", "");
-          video.muted = true;
-          video.autoplay = true;
-
-          /*
-           * Request a sensible balance between image quality and tracking
-           * performance. "ideal" allows the browser to choose the closest
-           * supported value instead of failing on devices that cannot provide it.
-           */
-          const resolutionConstraints = {
-            width: {
-              ideal: 1280
-            },
-            height: {
-              ideal: 720
-            },
-            aspectRatio: {
-              ideal: 16 / 9
-            },
-            frameRate: {
-              ideal: 30,
-              max: 30
-            }
-          };
-
-          try {
-            await track.applyConstraints(resolutionConstraints);
-          } catch (error) {
-            /*
-             * Continue using the browser-selected camera settings if the
-             * requested resolution is unsupported.
-             */
-            console.warn(
-              "Could not apply the requested camera resolution:",
-              error
-            );
-          }
-
-          /*
-           * Apply optional camera controls only when the current phone and
-           * browser report that they support them.
-           */
-          if (typeof track.getCapabilities === "function") {
-            const capabilities = track.getCapabilities();
-            const advancedSettings = {};
-
-            if (
-              supportsMode(capabilities.focusMode, "continuous")
-            ) {
-              advancedSettings.focusMode = "continuous";
-            }
-
-            if (
-              supportsMode(capabilities.exposureMode, "continuous")
-            ) {
-              advancedSettings.exposureMode = "continuous";
-            }
-
-            if (
-              supportsMode(
-                capabilities.whiteBalanceMode,
-                "continuous"
-              )
-            ) {
-              advancedSettings.whiteBalanceMode = "continuous";
-            }
-
-            /*
-             * Keep browser-controlled zoom at 1× where supported.
-             * This avoids unnecessary digital zoom and image degradation.
-             */
-            if (
-              capabilities.zoom &&
-              typeof capabilities.zoom.min === "number" &&
-              typeof capabilities.zoom.max === "number" &&
-              capabilities.zoom.min <= 1 &&
-              capabilities.zoom.max >= 1
-            ) {
-              advancedSettings.zoom = 1;
-            }
-
-            if (Object.keys(advancedSettings).length > 0) {
-              try {
-                await track.applyConstraints({
-                  advanced: [advancedSettings]
-                });
-              } catch (error) {
-                console.warn(
-                  "Optional camera controls could not be applied:",
-                  error
-                );
-              }
-            }
-          }
-
-          try {
-            await video.play();
-          } catch (error) {
-            console.warn("Camera video could not be explicitly played:", error);
-          }
-
-          if (typeof track.getSettings === "function") {
-            const settings = track.getSettings();
-
-            console.log("Active camera settings:", settings);
-            console.log(
-              `Camera resolution: ${settings.width ?? "unknown"} × ${
-                settings.height ?? "unknown"
-              }`
-            );
-            console.log(
-              `Camera frame rate: ${settings.frameRate ?? "unknown"}`
-            );
-            console.log(
-              `Camera facing mode: ${settings.facingMode ?? "unknown"}`
-            );
-
-            if (
-              settings.width &&
-              settings.height &&
-              (settings.width < 1000 || settings.height < 700)
-            ) {
-              console.warn(
-                "The browser selected a relatively low camera resolution. " +
-                  "Image tracking may be less stable."
-              );
-            }
-          }
-        }
-
-        scene.addEventListener("arReady", async () => {
-          console.log("MindAR is ready.");
+        scene.addEventListener("arReady", () => {
+          mindArReady = true;
           errorMessage.classList.add("hidden");
 
-          try {
-            await improveMobileCamera();
-          } catch (error) {
+          const controller = getHybridController();
+          if (controller) {
+            controller.setSnapEnabled(arEnabled);
+
             /*
-             * MindAR may still work even if the additional camera constraints
-             * cannot be applied, so this does not show the full-screen error.
+             * Preserve screen position/size while MindAR swaps in its calibrated
+             * camera projection. This is a one-time correction, not animation.
              */
-            console.warn(
-              "MindAR started, but camera optimisation failed:",
-              error
-            );
+            controller.stabilizeManualViewForActiveProjection();
+
+            if (arEnabled) {
+              controller.forceManualView();
+            }
           }
+
+          if (arEnabled) {
+            showScanHint(3500);
+          } else {
+            const arSystem = getArSystem();
+            if (arSystem) {
+              arSystem.pause(true);
+              target.object3D.visible = false;
+            }
+          }
+
+          syncWaterSound();
         });
 
         scene.addEventListener("arError", (event) => {
@@ -636,33 +1265,26 @@
           errorMessage.classList.remove("hidden");
         });
 
-        target.addEventListener("targetFound", async () => {
-          console.log("Target found.");
-
-          /*
-           * Start the looping water sound from the beginning whenever the
-           * target becomes visible.
-           */
-          targetFoundSound.pause();
-          targetFoundSound.currentTime = 0;
-
-          try {
-            await targetFoundSound.play();
-          } catch (error) {
-            /*
-             * Some mobile browsers block audio until the user has interacted
-             * with the page. The next targetFound event can play after a tap.
-             */
-            console.warn("Target sound could not be played:", error);
+        target.addEventListener("targetFound", () => {
+          if (!arEnabled) {
+            return;
           }
+
+          hideScanHint();
+          syncWaterSound();
         });
 
         target.addEventListener("targetLost", () => {
-          console.log("Target lost.");
+          /* Sound continues: the model remains visible in manual mode. */
+          syncWaterSound();
+        });
 
-          // Stop the looping sound as soon as the target is no longer tracked.
-          targetFoundSound.pause();
-          targetFoundSound.currentTime = 0;
+        document.addEventListener("visibilitychange", () => {
+          if (document.hidden) {
+            waterSound.pause();
+          } else {
+            syncWaterSound();
+          }
         });
       });
     </script>
