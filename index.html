@@ -29,7 +29,7 @@
         schema: {
           target: { type: "selector" },
           manualDepth: { type: "number", default: 50 },
-          defaultManualScale: { type: "number", default: 17 },
+          defaultManualScale: { type: "number", default: 10 },
           minScale: { type: "number", default: 0.2 },
           maxScale: { type: "number", default: 4 },
           snapTransitionMs: { type: "number", default: 380 }
@@ -43,7 +43,7 @@
           this.snapElapsed = 0;
 
           this.manualZoom = 1;
-          this.manualPosition = new THREE.Vector3(0, 0, -this.data.manualDepth);
+          this.manualPosition = new THREE.Vector3(0, -15, -this.data.manualDepth);
           this.manualQuaternion = new THREE.Quaternion();
           this.manualBaseScale = new THREE.Vector3().setScalar(
             this.data.defaultManualScale
@@ -64,7 +64,8 @@
           this.unprojectScratch = new THREE.Vector4();
           this.inverseProjectionScratch = new THREE.Matrix4();
 
-          this.rotationEuler = new THREE.Euler(0, 0, 0, "YXZ");
+          this.rotationEuler = new THREE.Euler(-Math.PI / 2, 0, 0, "YXZ");
+          this.manualQuaternion.setFromEuler(this.rotationEuler);
 
           this.pointerState = new Map();
           this.hasTwoFingerBaseline = false;
@@ -419,12 +420,14 @@
 
         resetFreeView({ resetRotation = true } = {}) {
           this.getScreenCenterAtDepth(this.data.manualDepth);
+          this.manualPosition.y -= 15;
           this.manualZoom = 1;
           this.manualBaseScale.setScalar(this.data.defaultManualScale);
           this.manualScale.copy(this.manualBaseScale);
 
           if (resetRotation) {
-            this.manualQuaternion.identity();
+            this.rotationEuler.set(-Math.PI / 2, 0, 0, "YXZ");
+            this.manualQuaternion.setFromEuler(this.rotationEuler);
           }
 
           if (this.isManualMode()) {
@@ -1164,7 +1167,7 @@
         hybrid-ar-view="
           target: #image-target;
           manualDepth: 50;
-          defaultManualScale: 17;
+          defaultManualScale: 10;
           minScale: 0.2;
           maxScale: 4;
           snapTransitionMs: 380;
