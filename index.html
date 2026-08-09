@@ -836,6 +836,271 @@
         background: rgba(35, 42, 49, 0.88);
       }
 
+
+      /* Compact model-colour drawer: centred on the left edge and unobtrusive when closed. */
+      #colour-drawer {
+        --drawer-width: min(310px, calc(100vw - 68px));
+        position: fixed;
+        top: 50%;
+        left: 0;
+        z-index: 1650;
+        width: var(--drawer-width);
+        transform: translate3d(0, -50%, 0);
+        transition: transform 240ms cubic-bezier(0.2, 0.75, 0.25, 1);
+        pointer-events: none;
+      }
+
+      #colour-drawer.is-collapsed {
+        transform: translate3d(-100%, -50%, 0);
+      }
+
+      #colour-panel {
+        position: relative;
+        width: 100%;
+        max-height: min(72vh, 520px);
+        box-sizing: border-box;
+        overflow: auto;
+        padding: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-left: 0;
+        border-radius: 0 18px 18px 0;
+
+        color: white;
+        background: linear-gradient(
+          145deg,
+          rgba(24, 31, 36, 0.92),
+          rgba(17, 23, 28, 0.86)
+        );
+        box-shadow: 0 16px 38px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(14px) saturate(125%);
+        -webkit-backdrop-filter: blur(14px) saturate(125%);
+
+        font-family: Arial, sans-serif;
+        pointer-events: auto;
+        scrollbar-width: thin;
+      }
+
+      #colour-panel-toggle {
+        position: absolute;
+        top: 50%;
+        left: 100%;
+        width: 44px;
+        height: 92px;
+        padding: 7px 0;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-left: 0;
+        border-radius: 0 14px 14px 0;
+        transform: translateY(-50%);
+
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+
+        color: white;
+        background: rgba(24, 31, 36, 0.86);
+        box-shadow: 8px 8px 24px rgba(0, 0, 0, 0.22);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+
+        cursor: pointer;
+        pointer-events: auto;
+        -webkit-tap-highlight-color: transparent;
+        transition:
+          background 160ms ease,
+          width 160ms ease;
+      }
+
+      #colour-panel-toggle:hover {
+        width: 47px;
+        background: rgba(30, 39, 45, 0.94);
+      }
+
+      #colour-panel-toggle:focus-visible {
+        outline: 3px solid rgba(255, 255, 255, 0.95);
+        outline-offset: 3px;
+      }
+
+      .drawer-tab-label {
+        display: inline-block;
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: 1.2px;
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+        pointer-events: none;
+        user-select: none;
+      }
+
+      .drawer-arrow {
+        display: inline-block;
+        font-size: 27px;
+        font-weight: 300;
+        line-height: 0.9;
+        transform: rotate(0deg);
+        transition: transform 220ms ease;
+        pointer-events: none;
+      }
+
+      #colour-drawer:not(.is-collapsed) .drawer-arrow {
+        transform: rotate(180deg);
+      }
+
+      .visually-hidden {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        padding: 0 !important;
+        margin: -1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+      }
+
+      .colour-panel-header {
+        margin-bottom: 14px;
+      }
+
+      .colour-panel-header h2 {
+        margin: 0;
+        font-size: 17px;
+        line-height: 1.2;
+        letter-spacing: 0.1px;
+      }
+
+      .colour-panel-header p {
+        margin: 5px 0 0;
+        color: rgba(255, 255, 255, 0.65);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .colour-control {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 42px 42px;
+        gap: 8px;
+        align-items: center;
+        padding: 12px;
+        margin-top: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        border-radius: 13px;
+        background: rgba(255, 255, 255, 0.055);
+      }
+
+      .colour-control label {
+        grid-column: 1 / -1;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.25px;
+      }
+
+      .colour-select,
+      .colour-picker,
+      .eyedropper-button {
+        height: 38px;
+        min-width: 0;
+        box-sizing: border-box;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 9px;
+        outline: none;
+      }
+
+      .colour-select {
+        width: 100%;
+        padding: 0 9px;
+        color: white;
+        background: rgba(255, 255, 255, 0.085);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .colour-select option {
+        color: #1f2933;
+        background: white;
+      }
+
+      .colour-picker {
+        width: 42px;
+        padding: 3px;
+        background: rgba(255, 255, 255, 0.085);
+        cursor: pointer;
+      }
+
+      .eyedropper-button {
+        width: 42px;
+        padding: 0;
+        color: white;
+        background: rgba(255, 255, 255, 0.085);
+        font: inherit;
+        font-size: 17px;
+        cursor: pointer;
+      }
+
+      .eyedropper-button:hover,
+      .colour-select:hover,
+      .colour-picker:hover {
+        background-color: rgba(255, 255, 255, 0.15);
+        border-color: rgba(255, 255, 255, 0.34);
+      }
+
+      .eyedropper-button:focus-visible,
+      .colour-select:focus-visible,
+      .colour-picker:focus-visible {
+        outline: 2px solid rgba(255, 255, 255, 0.9);
+        outline-offset: 2px;
+      }
+
+      #colour-status {
+        min-height: 1.25em;
+        margin: 10px 2px 0;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      body.colour-sampling,
+      body.colour-sampling canvas,
+      body.colour-sampling video {
+        cursor: crosshair !important;
+      }
+
+      @media (max-width: 680px) {
+        #colour-drawer {
+          --drawer-width: min(286px, calc(100vw - 58px));
+          top: 52%;
+        }
+
+        #colour-panel {
+          max-height: 64vh;
+          padding: 14px;
+          border-radius: 0 16px 16px 0;
+        }
+
+        #colour-panel-toggle {
+          width: 40px;
+          height: 84px;
+          gap: 4px;
+        }
+
+        #colour-panel-toggle:hover {
+          width: 42px;
+        }
+
+        .drawer-tab-label {
+          font-size: 8px;
+          letter-spacing: 1px;
+        }
+
+        .drawer-arrow {
+          font-size: 24px;
+        }
+      }
+
       /* Verdantia logo link */
       #verdantia-link {
         position: fixed;
@@ -1046,6 +1311,81 @@
       </button>
     </div>
 
+
+    <div id="colour-drawer" class="is-collapsed">
+      <section id="colour-panel" aria-label="Model colour controls">
+        <div class="colour-panel-header">
+          <h2>Model Colours</h2>
+          <p>Customise the planter body without changing the other 3D assets.</p>
+        </div>
+
+        <div class="colour-control" data-material="Planter">
+          <label for="planter-colour-select">Planter</label>
+          <select id="planter-colour-select" class="colour-select" aria-label="Planter preset colour">
+            <option value="#9ca585" selected>Lime Green</option>
+            <option value="#615e5f">Charcoal Grey</option>
+            <option value="#171717">Black Matte</option>
+            <option value="custom">Custom</option>
+          </select>
+          <input
+            id="planter-colour-picker"
+            class="colour-picker"
+            type="color"
+            value="#9ca585"
+            aria-label="Choose a custom Planter colour"
+            title="Choose a custom Planter colour"
+          />
+          <button
+            id="planter-eyedropper"
+            class="eyedropper-button"
+            type="button"
+            aria-label="Pick a Planter colour from the screen"
+            title="Pick colour from camera or canvas"
+          >◉</button>
+        </div>
+
+        <div class="colour-control" data-material="Sides">
+          <label for="sides-colour-select">Sides</label>
+          <select id="sides-colour-select" class="colour-select" aria-label="Sides preset colour">
+            <option value="#615e5f" selected>Charcoal Grey</option>
+            <option value="#171717">Black Matte</option>
+            <option value="#9ca585">Lime Green</option>
+            <option value="custom">Custom</option>
+          </select>
+          <input
+            id="sides-colour-picker"
+            class="colour-picker"
+            type="color"
+            value="#615e5f"
+            aria-label="Choose a custom Sides colour"
+            title="Choose a custom Sides colour"
+          />
+          <button
+            id="sides-eyedropper"
+            class="eyedropper-button"
+            type="button"
+            aria-label="Pick a Sides colour from the screen"
+            title="Pick colour from camera or canvas"
+          >◉</button>
+        </div>
+
+        <p id="colour-status" role="status" aria-live="polite"></p>
+      </section>
+
+      <button
+        id="colour-panel-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="colour-panel"
+        aria-label="Open model colour controls"
+        title="Model colours"
+      >
+        <span class="drawer-tab-label" aria-hidden="true">COLOUR</span>
+        <span class="drawer-arrow" aria-hidden="true">›</span>
+        <span class="visually-hidden">Toggle model colour controls</span>
+      </button>
+    </div>
+
     <div id="scan-hint" role="status" aria-live="polite">
       Point the camera at the target to snap the model into AR
     </div>
@@ -1211,6 +1551,7 @@
         ></a-plane>
 
         <a-gltf-model
+          id="avatar-model-entity"
           src="#avatarModel"
           position="0 0 0"
           rotation="90 0 0"
@@ -1295,17 +1636,440 @@
         const arHelpButton = document.querySelector("#ar-help-button");
         const arHelpModal = document.querySelector("#ar-help-modal");
         const arHelpClose = document.querySelector("#ar-help-close");
+        const avatarModelEntity = document.querySelector("#avatar-model-entity");
+        const colourDrawer = document.querySelector("#colour-drawer");
+        const colourPanelToggle = document.querySelector("#colour-panel-toggle");
+        const colourStatus = document.querySelector("#colour-status");
+        const planterColourSelect = document.querySelector("#planter-colour-select");
+        const planterColourPicker = document.querySelector("#planter-colour-picker");
+        const planterEyedropper = document.querySelector("#planter-eyedropper");
+        const sidesColourSelect = document.querySelector("#sides-colour-select");
+        const sidesColourPicker = document.querySelector("#sides-colour-picker");
+        const sidesEyedropper = document.querySelector("#sides-eyedropper");
 
         let arEnabled = true;
         let mindArReady = false;
         let arStartInFlight = false;
         let scanHintTimer = 0;
+        let samplingMaterialName = null;
+
+        const materialColours = {
+          Planter: "#9ca585",
+          Sides: "#615e5f"
+        };
+
+        /*
+         * Material references are collected only from the single rendered
+         * model.glb entity. Matching materials are cloned before use, which
+         * prevents colour changes from leaking to any other GLTF instance.
+         */
+        const avatarMaterialTargets = {
+          Planter: [],
+          Sides: []
+        };
+        let avatarMaterialsPrepared = false;
 
         const getHybridController = () =>
           contentRoot.components["hybrid-ar-view"] || null;
 
         const getArSystem = () =>
           scene.systems ? scene.systems["mindar-image-system"] : null;
+
+
+        function normaliseHexColour(value) {
+          if (typeof value !== "string") {
+            return null;
+          }
+
+          const match = value.trim().match(/^#?([0-9a-f]{6})$/i);
+          return match ? `#${match[1].toLowerCase()}` : null;
+        }
+
+        function prepareAvatarMaterials() {
+          if (!avatarModelEntity) {
+            return false;
+          }
+
+          const modelRoot = avatarModelEntity.getObject3D("mesh");
+          if (!modelRoot) {
+            return false;
+          }
+
+          avatarMaterialTargets.Planter.length = 0;
+          avatarMaterialTargets.Sides.length = 0;
+
+          modelRoot.traverse((object) => {
+            if (!object || !object.material) {
+              return;
+            }
+
+            const sourceMaterials = Array.isArray(object.material)
+              ? object.material
+              : [object.material];
+            let changed = false;
+
+            const isolatedMaterials = sourceMaterials.map((material) => {
+              if (
+                !material ||
+                !Object.prototype.hasOwnProperty.call(avatarMaterialTargets, material.name)
+              ) {
+                return material;
+              }
+
+              /* Clone only the two editable materials inside model.glb. */
+              const isolated = material.clone();
+              isolated.name = material.name;
+              isolated.userData = {
+                ...isolated.userData,
+                verdantiaAvatarColourMaterial: true
+              };
+              avatarMaterialTargets[isolated.name].push(isolated);
+              changed = true;
+              return isolated;
+            });
+
+            if (changed) {
+              object.material = Array.isArray(object.material)
+                ? isolatedMaterials
+                : isolatedMaterials[0];
+            }
+          });
+
+          avatarMaterialsPrepared = true;
+          return true;
+        }
+
+        function updateMaterialColour(materialName, colourValue) {
+          const hex = normaliseHexColour(colourValue);
+          if (
+            !hex ||
+            !Object.prototype.hasOwnProperty.call(avatarMaterialTargets, materialName)
+          ) {
+            return false;
+          }
+
+          materialColours[materialName] = hex;
+
+          if (!avatarMaterialsPrepared && !prepareAvatarMaterials()) {
+            return false;
+          }
+
+          const targets = avatarMaterialTargets[materialName];
+          targets.forEach((material) => {
+            if (material && material.color) {
+              material.color.set(hex);
+              material.needsUpdate = true;
+            }
+          });
+
+          if (!targets.length) {
+            console.warn(
+              `No material named "${materialName}" was found inside model.glb. ` +
+              "Other 3D assets were not searched or modified."
+            );
+          }
+
+          return targets.length > 0;
+        }
+
+        function applyStoredModelColours() {
+          if (!avatarMaterialsPrepared) {
+            prepareAvatarMaterials();
+          }
+
+          Object.entries(materialColours).forEach(([materialName, hex]) => {
+            updateMaterialColour(materialName, hex);
+          });
+        }
+
+        function syncColourControls(select, picker, hex) {
+          const normalised = normaliseHexColour(hex);
+          if (!normalised) {
+            return;
+          }
+
+          picker.value = normalised;
+          const matchingOption = Array.from(select.options).find(
+            (option) => option.value.toLowerCase() === normalised
+          );
+          select.value = matchingOption ? matchingOption.value : "custom";
+        }
+
+        function setColourStatus(message) {
+          colourStatus.textContent = message || "";
+        }
+
+        function applySelectedColour(materialName, select, picker) {
+          if (select.value === "custom") {
+            updateMaterialColour(materialName, picker.value);
+            return;
+          }
+
+          picker.value = select.value;
+          updateMaterialColour(materialName, select.value);
+        }
+
+        function rgbBytesToHex(r, g, b) {
+          return `#${[r, g, b]
+            .map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0"))
+            .join("")}`;
+        }
+
+        function sampleWebGlCanvasAt(clientX, clientY) {
+          const canvas = scene.canvas;
+          const renderer = scene.renderer;
+
+          if (!canvas || !renderer || typeof renderer.getContext !== "function") {
+            return null;
+          }
+
+          const rect = canvas.getBoundingClientRect();
+          if (
+            clientX < rect.left ||
+            clientX > rect.right ||
+            clientY < rect.top ||
+            clientY > rect.bottom
+          ) {
+            return null;
+          }
+
+          const gl = renderer.getContext();
+          if (!gl) {
+            return null;
+          }
+
+          const x = Math.min(
+            gl.drawingBufferWidth - 1,
+            Math.max(0, Math.floor(((clientX - rect.left) / rect.width) * gl.drawingBufferWidth))
+          );
+          const y = Math.min(
+            gl.drawingBufferHeight - 1,
+            Math.max(
+              0,
+              Math.floor(
+                (1 - (clientY - rect.top) / rect.height) * gl.drawingBufferHeight
+              )
+            )
+          );
+
+          const pixel = new Uint8Array(4);
+
+          try {
+            gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+          } catch (error) {
+            console.warn("Canvas colour sampling failed:", error);
+            return null;
+          }
+
+          /*
+           * The A-Frame canvas is transparent over the MindAR camera video.
+           * Ignore transparent pixels so a background tap can fall through to
+           * the camera-video sampler below.
+           */
+          if (pixel[3] <= 8) {
+            return null;
+          }
+
+          return rgbBytesToHex(pixel[0], pixel[1], pixel[2]);
+        }
+
+        function mapClientPointToVideoPixel(video, clientX, clientY) {
+          const rect = video.getBoundingClientRect();
+          if (
+            !rect.width ||
+            !rect.height ||
+            !video.videoWidth ||
+            !video.videoHeight ||
+            clientX < rect.left ||
+            clientX > rect.right ||
+            clientY < rect.top ||
+            clientY > rect.bottom
+          ) {
+            return null;
+          }
+
+          const style = getComputedStyle(video);
+          const objectFit = style.objectFit || "fill";
+          const sourceWidth = video.videoWidth;
+          const sourceHeight = video.videoHeight;
+          const boxWidth = rect.width;
+          const boxHeight = rect.height;
+
+          let renderedWidth = boxWidth;
+          let renderedHeight = boxHeight;
+          let offsetX = 0;
+          let offsetY = 0;
+
+          if (objectFit === "cover" || objectFit === "contain") {
+            const scale =
+              objectFit === "cover"
+                ? Math.max(boxWidth / sourceWidth, boxHeight / sourceHeight)
+                : Math.min(boxWidth / sourceWidth, boxHeight / sourceHeight);
+
+            renderedWidth = sourceWidth * scale;
+            renderedHeight = sourceHeight * scale;
+            offsetX = (boxWidth - renderedWidth) * 0.5;
+            offsetY = (boxHeight - renderedHeight) * 0.5;
+          }
+
+          const localX = clientX - rect.left - offsetX;
+          const localY = clientY - rect.top - offsetY;
+
+          if (
+            localX < 0 ||
+            localY < 0 ||
+            localX > renderedWidth ||
+            localY > renderedHeight
+          ) {
+            return null;
+          }
+
+          return {
+            x: Math.min(
+              sourceWidth - 1,
+              Math.max(0, Math.floor((localX / renderedWidth) * sourceWidth))
+            ),
+            y: Math.min(
+              sourceHeight - 1,
+              Math.max(0, Math.floor((localY / renderedHeight) * sourceHeight))
+            )
+          };
+        }
+
+        function sampleCameraVideoAt(clientX, clientY) {
+          const videos = Array.from(document.querySelectorAll("video")).filter(
+            (video) =>
+              video.readyState >= 2 &&
+              video.videoWidth > 0 &&
+              video.videoHeight > 0 &&
+              getComputedStyle(video).visibility !== "hidden" &&
+              getComputedStyle(video).display !== "none"
+          );
+
+          for (const video of videos) {
+            const point = mapClientPointToVideoPixel(video, clientX, clientY);
+            if (!point) {
+              continue;
+            }
+
+            const sampler = document.createElement("canvas");
+            sampler.width = 1;
+            sampler.height = 1;
+            const context = sampler.getContext("2d", {
+              willReadFrequently: true
+            });
+
+            if (!context) {
+              continue;
+            }
+
+            try {
+              context.drawImage(
+                video,
+                point.x,
+                point.y,
+                1,
+                1,
+                0,
+                0,
+                1,
+                1
+              );
+              const pixel = context.getImageData(0, 0, 1, 1).data;
+              return rgbBytesToHex(pixel[0], pixel[1], pixel[2]);
+            } catch (error) {
+              console.warn("Camera colour sampling failed:", error);
+            }
+          }
+
+          return null;
+        }
+
+        function applyEyedropperResult(materialName, hex) {
+          const controls =
+            materialName === "Planter"
+              ? [planterColourSelect, planterColourPicker]
+              : [sidesColourSelect, sidesColourPicker];
+
+          syncColourControls(controls[0], controls[1], hex);
+          updateMaterialColour(materialName, hex);
+          setColourStatus(`${materialName} set to ${hex.toUpperCase()}.`);
+        }
+
+        function stopFallbackSampling() {
+          samplingMaterialName = null;
+          document.body.classList.remove("colour-sampling");
+          document.removeEventListener("pointerdown", handleFallbackSample, true);
+          document.removeEventListener("keydown", cancelFallbackSample, true);
+        }
+
+        function cancelFallbackSample(event) {
+          if (event.key !== "Escape") {
+            return;
+          }
+
+          stopFallbackSampling();
+          setColourStatus("Colour sampling cancelled.");
+        }
+
+        function handleFallbackSample(event) {
+          if (!samplingMaterialName) {
+            return;
+          }
+
+          /*
+           * Capture before the model gesture handler sees the event, so the tap
+           * samples a colour instead of rotating/panning the model.
+           */
+          event.preventDefault();
+          event.stopPropagation();
+
+          const materialName = samplingMaterialName;
+          const hex =
+            sampleWebGlCanvasAt(event.clientX, event.clientY) ||
+            sampleCameraVideoAt(event.clientX, event.clientY);
+
+          stopFallbackSampling();
+
+          if (hex) {
+            applyEyedropperResult(materialName, hex);
+          } else {
+            setColourStatus(
+              "Could not sample that pixel. Try the browser eyedropper or tap the visible camera/model area."
+            );
+          }
+        }
+
+        async function startEyedropper(materialName) {
+          stopFallbackSampling();
+
+          if ("EyeDropper" in window) {
+            try {
+              setColourStatus("Choose any visible pixel on the screen.");
+              const result = await new window.EyeDropper().open();
+
+              if (result && result.sRGBHex) {
+                applyEyedropperResult(materialName, result.sRGBHex);
+              }
+              return;
+            } catch (error) {
+              if (error && error.name === "AbortError") {
+                setColourStatus("Colour sampling cancelled.");
+                return;
+              }
+
+              console.warn("Native EyeDropper unavailable; using tap-to-sample fallback:", error);
+            }
+          }
+
+          samplingMaterialName = materialName;
+          document.body.classList.add("colour-sampling");
+          document.addEventListener("pointerdown", handleFallbackSample, true);
+          document.addEventListener("keydown", cancelFallbackSample, true);
+          setColourStatus(
+            `Tap the camera or 3D canvas to sample a colour for ${materialName}. Press Esc to cancel.`
+          );
+        }
 
         function hideScanHint() {
           if (scanHintTimer) {
@@ -1495,6 +2259,87 @@
 
         setKoiVisibility(true);
         updateArButton();
+
+        function setColourDrawerOpen(isOpen) {
+          const open = Boolean(isOpen);
+          colourDrawer.classList.toggle("is-collapsed", !open);
+          colourPanelToggle.setAttribute("aria-expanded", String(open));
+          colourPanelToggle.setAttribute(
+            "aria-label",
+            open ? "Close model colour controls" : "Open model colour controls"
+          );
+        }
+
+        colourPanelToggle.addEventListener("click", () => {
+          const isOpen = !colourDrawer.classList.contains("is-collapsed");
+          setColourDrawerOpen(!isOpen);
+        });
+
+        /*
+         * Close the colour drawer when the user clicks/taps anywhere outside it.
+         * This listener never prevents propagation, so the same interaction still
+         * reaches the AR canvas, model gestures, help button, and other controls.
+         */
+        document.addEventListener(
+          "pointerdown",
+          (event) => {
+            if (colourDrawer.classList.contains("is-collapsed")) {
+              return;
+            }
+
+            if (colourDrawer.contains(event.target)) {
+              return;
+            }
+
+            setColourDrawerOpen(false);
+          },
+          true
+        );
+
+        planterColourSelect.addEventListener("change", () => {
+          applySelectedColour("Planter", planterColourSelect, planterColourPicker);
+          setColourStatus("");
+        });
+
+        planterColourPicker.addEventListener("input", () => {
+          planterColourSelect.value = "custom";
+          updateMaterialColour("Planter", planterColourPicker.value);
+          setColourStatus("");
+        });
+
+        sidesColourSelect.addEventListener("change", () => {
+          applySelectedColour("Sides", sidesColourSelect, sidesColourPicker);
+          setColourStatus("");
+        });
+
+        sidesColourPicker.addEventListener("input", () => {
+          sidesColourSelect.value = "custom";
+          updateMaterialColour("Sides", sidesColourPicker.value);
+          setColourStatus("");
+        });
+
+        planterEyedropper.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void startEyedropper("Planter");
+        });
+
+        sidesEyedropper.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void startEyedropper("Sides");
+        });
+
+        avatarModelEntity.addEventListener("model-loaded", () => {
+          avatarMaterialsPrepared = false;
+          applyStoredModelColours();
+        });
+
+        /*
+         * Covers fast/cached GLB loads where model-loaded may already have fired
+         * by the time DOMContentLoaded runs.
+         */
+        if (avatarModelEntity.getObject3D("mesh")) {
+          applyStoredModelColours();
+        }
 
         aquaponicsToggle.addEventListener("click", () => {
           const isEnabled =
