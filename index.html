@@ -8,7 +8,8 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
     />
 
-    <title>MindAR Image Tracking</title>
+    <title>Verdantia AR</title>
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/yonhonng/junk_code/main/logo_small.png" />
 
     <!-- MindAR 1.2.5 officially documents A-Frame 1.5.0 -->
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -613,17 +614,36 @@
           this.manualPosition.y -= dy * unitsPerPixel;
         },
 
-        updateManualScale() {
-          this.manualScale.copy(this.manualBaseScale).multiplyScalar(this.manualZoom);
-        },
-
+        /*
+         * Wheel/pinch zoom uses a camera dolly instead of resizing the model.
+         * manualZoom remains the bounded interaction accumulator:
+         *   > 1 = closer to the camera
+         *   < 1 = farther from the camera
+         *
+         * Scaling x/y/z together moves the model along the ray from the camera
+         * through its current position, so an off-centre model stays under the
+         * same screen point while zooming.
+         */
         scaleBy(factor) {
-          this.manualZoom = THREE.MathUtils.clamp(
-            this.manualZoom * factor,
+          const previousZoom = this.manualZoom;
+          const nextZoom = THREE.MathUtils.clamp(
+            previousZoom * factor,
             this.data.minScale,
             this.data.maxScale
           );
-          this.updateManualScale();
+
+          if (
+            !Number.isFinite(previousZoom) ||
+            !Number.isFinite(nextZoom) ||
+            previousZoom <= 0 ||
+            nextZoom <= 0
+          ) {
+            return;
+          }
+
+          const distanceFactor = previousZoom / nextZoom;
+          this.manualPosition.multiplyScalar(distanceFactor);
+          this.manualZoom = nextZoom;
         }
       });
     </script>
@@ -1099,6 +1119,19 @@
         .drawer-arrow {
           font-size: 24px;
         }
+      }
+
+
+      /*
+       * This experience is camera-based MindAR image tracking, not an immersive
+       * WebXR/VR scene. Keep A-Frame's injected VR/AR entry controls hidden even
+       * if a browser/version creates them despite vr-mode-ui being disabled.
+       */
+      .a-enter-vr,
+      .a-enter-vr-button,
+      .a-enter-ar,
+      .a-enter-ar-button {
+        display: none !important;
       }
 
       /* Verdantia logo link */
@@ -1650,6 +1683,7 @@
         let arEnabled = true;
         let mindArReady = false;
         let arStartInFlight = false;
+        let initialHelpDismissed = false;
         let scanHintTimer = 0;
         let samplingMaterialName = null;
 
@@ -2164,7 +2198,7 @@
         }
 
         async function startArIfPossible() {
-          if (!arEnabled || mindArReady || arStartInFlight) {
+          if (!arEnabled || !initialHelpDismissed || mindArReady || arStartInFlight) {
             return;
           }
 
@@ -2365,12 +2399,30 @@
         }
 
         function closeArHelp() {
+          const wasInitialHelp = !initialHelpDismissed;
+
           arHelpModal.classList.add("hidden");
           arHelpButton.focus();
+
+          /*
+           * Request camera access only after the user dismisses the initial help.
+           * Keeping this call on the close interaction also makes the permission
+           * request clearly user-initiated on browsers with stricter policies.
+           */
+          if (wasInitialHelp) {
+            initialHelpDismissed = true;
+
+            if (arEnabled) {
+              void startArIfPossible();
+            }
+          }
         }
 
         arHelpButton.addEventListener("click", openArHelp);
         arHelpClose.addEventListener("click", closeArHelp);
+
+        // Show AR instructions first on every fresh page load.
+        openArHelp();
 
         arHelpModal.addEventListener("click", (event) => {
           if (event.target === arHelpModal) {
@@ -2387,7 +2439,7 @@
         function handleSceneLoaded() {
           syncWaterSound();
 
-          if (arEnabled) {
+          if (arEnabled && initialHelpDismissed) {
             void startArIfPossible();
           }
         }
